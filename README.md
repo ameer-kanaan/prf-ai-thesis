@@ -1,6 +1,4 @@
 # Search for a Biomarker of Neural Feedback in the Human Brain: Optimization with Evolutionary Artificial Intelligence Methods and Evaluation of Neural Outcomes
-Complete code implementations from my Master thesis in AI investigating population receptive field (pRF) models. A study at the intersection of cognitive neuroscience and AI.
-
 ### Introduction
 I implemented a DoG–based pRF model to fit fMRI data from our study, which experimentally manipulated feedback processing in humans using Memantine. This is summarized in the following diagram: 
 <img width="1667" height="1558" alt="0" src="https://github.com/user-attachments/assets/35f19a46-2221-4363-9f68-8d635c6e7f95" />
