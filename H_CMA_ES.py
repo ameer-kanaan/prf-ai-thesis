@@ -2,160 +2,15 @@ import os
 import sys
 import time
 import csv
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
-import pandas as pd
 import nibabel as nib
 from scipy import io
 import yaml
-from prfpy import stimulus, model, fit
+from prfpy import stimulus, model
 from joblib import Parallel, delayed
 from scipy.optimize import minimize
 import cma
-
-
-#### Data loading and objects initialization ####
-print("Start of script: ", datetime.now().strftime("%H:%M:%S"))
-
-vertices_num = [1,2,11,101,1001,10001]
-task_id = int(sys.argv[1])
-num_vertices= vertices_num[task_id-1]
-
-# Aliases & constants
-opj = os.path.join
-basedir = '/home/ekenanoglu/DoG'
-eps = 1e-1
-inf = np.inf
-njobs = 192
-nbatches = njobs
-
-# Directory paths
-dir_contents_path = opj(basedir, "crossvalidation", "raw_data")
-dir_contents_subs = os.listdir(dir_contents_path)
-
-# Subjects & sessions
-subjects = ["002"] 
-sessions = ["avg"]
-
-# Load analysis config
-with open(opj(basedir, 'prf_analysis.yml')) as f:
-    analysis_info = yaml.safe_load(f)
-
-# Load design matrix
-dm = io.loadmat(opj(basedir, 'design_task-2R.mat'))['stim'][:, :, 5:]
-
-# Create stimulus object
-prf_stim = stimulus.PRFStimulus2D(
-    screen_size_cm=analysis_info['screen_size_cm'],
-    screen_distance_cm=analysis_info['screen_distance_cm'],
-    design_matrix=dm, 
-    TR=analysis_info['TR']
-)
-
-# Precompute parameters
-ss = prf_stim.screen_size_degrees
-max_ecc_size = ss / 2.0
-grid_nr = 30
-sizes = max_ecc_size * np.linspace(0.25, 1, grid_nr)**2
-eccs = max_ecc_size * np.linspace(0.1, 1, grid_nr)**2
-polars = np.linspace(0, 2*np.pi, grid_nr)
-
-# Thresholds and grids from config
-rsq_threshold = analysis_info['rsq_threshold']
-xtol = analysis_info['xtol']
-ftol = analysis_info['ftol']
-hrf_pars = analysis_info['hrf']['pars']
-surround_amplitude_grid = analysis_info['norm']['surround_amplitude_grid']
-surround_size_grid = analysis_info['norm']['surround_size_grid']
-neural_baseline_grid = analysis_info['norm']['neural_baseline_grid']
-surround_baseline_grid = analysis_info['norm']['surround_baseline_grid']
-
-# Process data for each session and subject
-for session_id in sessions:
-    for subject in subjects:
-        print(f"Loading subject {subject} data! - session {session_id}")
-
-        labels_rois = opj(basedir, "data", f'sub-{subject}')
-        data_full = np.load(opj(labels_rois, f'ses-{session_id}', 
-                                f"sub-{subject}_ses-{session_id}_task-2R_hemi-LR_desc-avg_bold.npy"))
-
-        # Load ROIs for left and right hemispheres
-        rois = ["V1", "V2", "V3", "FEF"]
-        lh_labels = {roi: nib.freesurfer.read_label(opj(labels_rois, "rois", "corrections", f'lh.{roi}.label')) for roi in rois}
-        rh_labels = {roi: nib.freesurfer.read_label(opj(labels_rois, "rois", "corrections", f'rh.{roi}.label')) for roi in rois}
-        all_lh = nib.freesurfer.read_geometry(opj(labels_rois, "rois", "surf", 'lh.inflated'))
-        offset = len(all_lh[0])  # Offset for RH vertices
-
-        # Combine and offset RH labels
-        combined_vertices = {
-            roi: np.sort(np.concatenate([lh_labels[roi], rh_labels[roi] + offset]))
-            for roi in rois
-        }
-
-        # Aggregate ROIs
-        roi_vertices = np.sort(np.concatenate(list(combined_vertices.values())))[:num_vertices]
-
-# Iterative search parameters
-iterative_search_params_file = np.load(
-    opj(basedir, "output", f"sub-{subject}", "fine grid params", 
-        f"dog_sub{subject}_sesavg_itrsrchparams_free_final.npy")
-)
-hrf_pars = iterative_search_params_file[:, 5:7]
-
-# Load V1 ROI for left & right hemispheres
-cw = labels_rois  # Alias for clarity
-
-# Load and extract data
-data_full = np.load(opj(cw, 'ses-avg', f"sub-{subject}_ses-avg_task-2R_hemi-LR_desc-avg_bold.npy"))
-print(f"Loading subject {subject} data! - session avg")
-ind_of_interst = roi_vertices
-data_roi = data_full[:, ind_of_interst]
-y_real = data_roi
-
-# Define Gaussian bounds
-gauss_bounds = [
-    (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # x
-    (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # y
-    (0.2, 1.5 * ss),                            # prf size
-    tuple(analysis_info['prf_ampl_gauss']),     # prf amplitude
-    tuple(analysis_info['bold_bsl']),           # bold baseline
-    tuple(analysis_info['hrf']['deriv_bound']), # hrf derivative
-    tuple(analysis_info['hrf']['disp_bound'])   # hrf dispersion
-]
-
-
-# Assumes max_ecc_size, ss, and analysis_info are defined earlier in your script
-gauss_bounds = [(-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # x
-                (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # y
-                (0.2, 1.5 * ss),  # prf size
-                tuple(analysis_info['prf_ampl_gauss']),  # prf amplitude
-                tuple(analysis_info['bold_bsl']),  # bold baseline
-                tuple(analysis_info['hrf']['deriv_bound']),  # hrf derivative
-                tuple(analysis_info['hrf']['disp_bound'])]
-
-
-DoG_bounds = [(-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # x
-              (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # y
-              (0.2, 1.5 * ss),  # prf size
-              tuple(analysis_info['prf_ampl_dog']),  # prf amplitude
-              tuple(analysis_info['bold_bsl']),  # bold baseline
-              tuple(analysis_info['dog']['surround_amplitude_bound']),
-              (eps, 3 * ss),  # surround size
-              tuple(analysis_info['hrf']['deriv_bound']),  # hrf derivative
-              tuple(analysis_info['hrf']['disp_bound'])]  # hrf dispersion
-
-DN_bounds = [(-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # x
-              (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # y
-              (0.2, 1.5 * ss),  # prf size
-              tuple(analysis_info['prf_ampl_dog']),  # prf amplitude
-              tuple(analysis_info['bold_bsl']),  # bold baseline
-              tuple(analysis_info['dog']['surround_amplitude_bound']),
-              (1e-8, 3 * ss),  # surround size (use small epsilon instead of eps variable)
-              tuple(analysis_info['norm']['neural_baseline_bound']),
-              tuple(analysis_info['norm']['surround_baseline_bound']),
-              tuple(analysis_info['hrf']['deriv_bound']),  # hrf derivative
-              tuple(analysis_info['hrf']['disp_bound'])]  # hrf dispersion
-
 
 
 #### H-BIPOP-CMA-ES utility dependencies ####
@@ -383,8 +238,153 @@ def hybrid_optimize_all_voxels(y_real, prf_stim, hrf_pars, model_type, initial_p
     return finefit_output
 
 
-# --- Execution ---
-#EXAMPLE USAGE
+## --- Execution ---
+## EXAMPLE USAGE
+
+#### Data loading and objects initialization - Just standard loading of pRF —normalized and post-processed— data ####
+# print("Start of script: ", datetime.now().strftime("%H:%M:%S"))
+
+# vertices_num = [1,2,11,101,1001,10001]
+# task_id = int(sys.argv[1])
+# num_vertices= vertices_num[task_id-1]
+
+# # Aliases & constants
+# opj = os.path.join
+# basedir = '/home/ekenanoglu/DoG'
+# eps = 1e-1
+# inf = np.inf
+# njobs = 192
+# nbatches = njobs
+
+# # Directory paths
+# dir_contents_path = opj(basedir, "crossvalidation", "raw_data")
+# dir_contents_subs = os.listdir(dir_contents_path)
+
+# # Subjects & sessions
+# subjects = ["002"] 
+# sessions = ["avg"]
+
+# # Load analysis config
+# with open(opj(basedir, 'prf_analysis.yml')) as f:
+#     analysis_info = yaml.safe_load(f)
+
+# # Load design matrix
+# dm = io.loadmat(opj(basedir, 'design_task-2R.mat'))['stim'][:, :, 5:]
+
+# # Create stimulus object
+# prf_stim = stimulus.PRFStimulus2D(
+#     screen_size_cm=analysis_info['screen_size_cm'],
+#     screen_distance_cm=analysis_info['screen_distance_cm'],
+#     design_matrix=dm, 
+#     TR=analysis_info['TR']
+# )
+
+# # Precompute parameters
+# ss = prf_stim.screen_size_degrees
+# max_ecc_size = ss / 2.0
+# grid_nr = 30
+# sizes = max_ecc_size * np.linspace(0.25, 1, grid_nr)**2
+# eccs = max_ecc_size * np.linspace(0.1, 1, grid_nr)**2
+# polars = np.linspace(0, 2*np.pi, grid_nr)
+
+# # Thresholds and grids from config
+# rsq_threshold = analysis_info['rsq_threshold']
+# xtol = analysis_info['xtol']
+# ftol = analysis_info['ftol']
+# hrf_pars = analysis_info['hrf']['pars']
+# surround_amplitude_grid = analysis_info['norm']['surround_amplitude_grid']
+# surround_size_grid = analysis_info['norm']['surround_size_grid']
+# neural_baseline_grid = analysis_info['norm']['neural_baseline_grid']
+# surround_baseline_grid = analysis_info['norm']['surround_baseline_grid']
+
+# # Process data for each session and subject
+# for session_id in sessions:
+#     for subject in subjects:
+#         print(f"Loading subject {subject} data! - session {session_id}")
+
+#         labels_rois = opj(basedir, "data", f'sub-{subject}')
+#         data_full = np.load(opj(labels_rois, f'ses-{session_id}', 
+#                                 f"sub-{subject}_ses-{session_id}_task-2R_hemi-LR_desc-avg_bold.npy"))
+
+#         # Load ROIs for left and right hemispheres
+#         rois = ["V1", "V2", "V3", "FEF"]
+#         lh_labels = {roi: nib.freesurfer.read_label(opj(labels_rois, "rois", "corrections", f'lh.{roi}.label')) for roi in rois}
+#         rh_labels = {roi: nib.freesurfer.read_label(opj(labels_rois, "rois", "corrections", f'rh.{roi}.label')) for roi in rois}
+#         all_lh = nib.freesurfer.read_geometry(opj(labels_rois, "rois", "surf", 'lh.inflated'))
+#         offset = len(all_lh[0])  # Offset for RH vertices
+
+#         # Combine and offset RH labels
+#         combined_vertices = {
+#             roi: np.sort(np.concatenate([lh_labels[roi], rh_labels[roi] + offset]))
+#             for roi in rois
+#         }
+
+#         # Aggregate ROIs
+#         roi_vertices = np.sort(np.concatenate(list(combined_vertices.values())))[:num_vertices]
+
+# # Iterative search parameters
+# iterative_search_params_file = np.load(
+#     opj(basedir, "output", f"sub-{subject}", "fine grid params", 
+#         f"dog_sub{subject}_sesavg_itrsrchparams_free_final.npy")
+# )
+# hrf_pars = iterative_search_params_file[:, 5:7]
+
+# # Load V1 ROI for left & right hemispheres
+# cw = labels_rois  # Alias for clarity
+
+# # Load and extract data
+# data_full = np.load(opj(cw, 'ses-avg', f"sub-{subject}_ses-avg_task-2R_hemi-LR_desc-avg_bold.npy"))
+# print(f"Loading subject {subject} data! - session avg")
+# ind_of_interst = roi_vertices
+# data_roi = data_full[:, ind_of_interst]
+# y_real = data_roi
+
+# # Define Gaussian bounds
+# gauss_bounds = [
+#     (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # x
+#     (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # y
+#     (0.2, 1.5 * ss),                            # prf size
+#     tuple(analysis_info['prf_ampl_gauss']),     # prf amplitude
+#     tuple(analysis_info['bold_bsl']),           # bold baseline
+#     tuple(analysis_info['hrf']['deriv_bound']), # hrf derivative
+#     tuple(analysis_info['hrf']['disp_bound'])   # hrf dispersion
+# ]
+
+
+# # Assumes max_ecc_size, ss, and analysis_info are defined earlier in your script
+# gauss_bounds = [(-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # x
+#                 (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # y
+#                 (0.2, 1.5 * ss),  # prf size
+#                 tuple(analysis_info['prf_ampl_gauss']),  # prf amplitude
+#                 tuple(analysis_info['bold_bsl']),  # bold baseline
+#                 tuple(analysis_info['hrf']['deriv_bound']),  # hrf derivative
+#                 tuple(analysis_info['hrf']['disp_bound'])]
+
+
+# DoG_bounds = [(-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # x
+#               (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # y
+#               (0.2, 1.5 * ss),  # prf size
+#               tuple(analysis_info['prf_ampl_dog']),  # prf amplitude
+#               tuple(analysis_info['bold_bsl']),  # bold baseline
+#               tuple(analysis_info['dog']['surround_amplitude_bound']),
+#               (eps, 3 * ss),  # surround size
+#               tuple(analysis_info['hrf']['deriv_bound']),  # hrf derivative
+#               tuple(analysis_info['hrf']['disp_bound'])]  # hrf dispersion
+
+# DN_bounds = [(-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # x
+#               (-1.5 * max_ecc_size, 1.5 * max_ecc_size),  # y
+#               (0.2, 1.5 * ss),  # prf size
+#               tuple(analysis_info['prf_ampl_dog']),  # prf amplitude
+#               tuple(analysis_info['bold_bsl']),  # bold baseline
+#               tuple(analysis_info['dog']['surround_amplitude_bound']),
+#               (1e-8, 3 * ss),  # surround size (use small epsilon instead of eps variable)
+#               tuple(analysis_info['norm']['neural_baseline_bound']),
+#               tuple(analysis_info['norm']['surround_baseline_bound']),
+#               tuple(analysis_info['hrf']['deriv_bound']),  # hrf derivative
+#               tuple(analysis_info['hrf']['disp_bound'])]  # hrf dispersion
+
+
+#### Now call the H-BIPOP-CMA-ES Function
 # hybrid_res = hybrid_optimize_all_voxels(
 #     y_real, prf_stim, hrf_pars, model_type="DoG", initial_params=None,
 #     max_iter_cma=None, max_iter_scipy=None, n_jobs=-1, sigma=1, popsize=16, restarts=2, bipop=True,

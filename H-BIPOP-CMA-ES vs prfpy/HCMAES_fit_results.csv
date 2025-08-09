@@ -65,13 +65,3 @@ num_vertices,coarsefit_time,iterfit_time,total_time,coarsefit_r2,iterfit_r2,libr
 10001,145.09,496.92,642.01,0.5264,0.6016,H-CMA-ES,Nelder-Mead
 10001,138.52,498.57,637.08,0.5262,0.6011,H-CMA-ES,Nelder-Mead
 10001,139.06,512.05,651.11,0.5266,0.602,H-CMA-ES,Nelder-Mead
-1,4.7,4.59,9.29,0.4658,0.4931,H-CMA-ES(High Order ROIs),Nelder-Mead
-10001,136.27,496.76,633.03,0.2506,0.2887,H-CMA-ES(High Order ROIs),Nelder-Mead
-1,4.83,10.39,15.22,0.4287,0.4932,H-CMA-ES(High Order ROIs - Unlimited NM iter),Nelder-Mead
-10001,142.75,1797.52,1940.27,0.2507,0.2942,H-CMA-ES(High Order ROIs - Unlimited NM iter),Nelder-Mead
-1,45.55,3.62,49.17,0.499,0.499,H-CMA-ES(High Order ROIs - Unlimited NM & CMA iter),Nelder-Mead
-10001,4058.71,384.87,4443.58,0.2988,0.2989,H-CMA-ES(High Order ROIs - Unlimited NM & CMA iter),Nelder-Mead
-1,65.89,3.91,69.81,0.499,0.499,H-CMA-ES(High Order ROIs - Unlimited NM & CMA iter & 2 restarts),Nelder-Mead
-10001,6171.38,395.83,6567.22,0.3003,0.3003,H-CMA-ES(High Order ROIs - Unlimited NM & CMA iter & 2 restarts),Nelder-Mead
-1,60.71,3.13,63.84,0.8625,0.8625,H-CMA-ES(V ROIs - Unlimited NM & CMA iter & 2 restarts),Nelder-Mead
-10001,5639.77,370.93,6010.7,0.6149,0.6149,H-CMA-ES(V ROIs - Unlimited NM & CMA iter & 2 restarts),Nelder-Mead

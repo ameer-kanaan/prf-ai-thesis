@@ -65,5 +65,3 @@ num_vertices,coarsefit_time,iterfit_time,total_time,coarsefit_r2,iterfit_r2,libr
 10001,67.66,2014.64,2082.3,0.4228,0.662,prfpy,Nelder-Mead
 10001,68.69,2025.03,2093.72,0.4228,0.662,prfpy,Nelder-Mead
 10001,74.38,2014.31,2088.7,0.4228,0.662,prfpy,Nelder-Mead
-1,47.46,22.78,70.24,0.4544,0.499,prfpy (High Order ROIs),Nelder-Mead
-10001,77.09,1722.29,1799.38,0.2439,0.3325,prfpy (High Order ROIs),Nelder-Mead
